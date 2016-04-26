@@ -1,11 +1,26 @@
 import requests
 import os
+import re
+import json
 
 WIT_API_HOST = os.getenv('WIT_URL', 'https://api.wit.ai')
+WIT_API_VER  = os.getenv('WIT_API_VER', '20160330')
 DEFAULT_MAX_STEPS = 5
 
+def prettyprint(data, indent = 4):
+    """Nicer version of pprint (which is actually kind of ugly)
+
+    Note: assumes that input data can be dumped to json (typically a list or dict)
+    """
+    pattern = re.compile(r'^', re.MULTILINE)
+    spaces = ' ' * indent
+    print re.sub(pattern, spaces, json.dumps(data, indent=indent, sort_keys=True))
+
 class WitError(Exception):
-    pass
+    def __init__(self, msg, resp=None):
+        self.args = (msg, resp)
+        self.message = msg
+        self.resp = resp
 
 def req(access_token, meth, path, params, **kwargs):
     rsp = requests.request(
@@ -13,14 +28,14 @@ def req(access_token, meth, path, params, **kwargs):
         WIT_API_HOST + path,
         headers={
             'authorization': 'Bearer ' + access_token,
-            'accept': 'application/vnd.wit.20160330+json'
+            'accept': 'application/vnd.wit.' + WIT_API_VER + '+json'
         },
         params=params,
         **kwargs
     )
     if rsp.status_code > 200:
         raise WitError('Wit responded with status: ' + str(rsp.status_code) +
-                       ' (' + rsp.reason + ')')
+                       ' (' + rsp.reason + ')', rsp)
     json = rsp.json()
     if 'error' in json:
         raise WitError('Wit responded with an error: ' + json['error'])
@@ -48,16 +63,22 @@ class Wit:
         self.access_token = access_token
         self.actions = validate_actions(actions)
 
-    def message(self, msg):
+    ####################
+    # message/converse #
+    ####################
+
+    def message(self, msg, context={}, **kwargs):
         params = {}
         if msg:
             params['q'] = msg
-        return req(self.access_token, 'GET', '/message', params)
+        params.update(kwargs)
+        return req(self.access_token, 'GET', '/message', params, json=context)
 
-    def converse(self, session_id, message, context={}):
+    def converse(self, session_id, message, context={}, **kwargs):
         params = {'session_id': session_id}
         if message:
             params['q'] = message
+        params.update(kwargs)
         return req(self.access_token, 'POST', '/converse', params, json=context)
 
     def __run_actions(self, session_id, message, context, max_steps,
@@ -106,3 +127,68 @@ class Wit:
                     max_steps=DEFAULT_MAX_STEPS):
         return self.__run_actions(session_id, message, context, max_steps,
                                   message)
+
+    ###########
+    # intents #
+    ###########
+
+    def list_intents(self):
+        params = {}
+        return req(self.access_token, 'GET', '/intents', params)
+
+    def get_intent(self, intent_id):
+        params = {}
+        uri_path = '/intents/' + intent_id
+        return req(self.access_token, 'GET', uri_path, params)
+
+    def post_intent(self, intent):
+        params = {}
+        return req(self.access_token, 'POST', '/intents', params, json=intent)
+
+    def put_intent(self, intent):
+        params = {}
+        intent_id = intent.pop('name', None)
+        if not intent_id:
+            return False
+        uri_path = '/intents/' + intent_id
+        return req(self.access_token, 'PUT', uri_path, params, json=intent)
+
+    def delete_intent(self, intent_id):
+        params = {}
+        uri_path = '/intents/' + intent_id
+        return req(self.access_token, 'DELETE', uri_path, params)
+
+    ############
+    # entities #
+    ############
+
+    def list_entities(self):
+        params = {}
+        return req(self.access_token, 'GET', '/entities', params)
+
+    def get_entity(self, entity_id):
+        params = {}
+        uri_path = '/entities/' + entity_id
+        return req(self.access_token, 'GET', uri_path, params)
+
+    def post_entity(self, entity):
+        params = {}
+        return req(self.access_token, 'POST', '/entities', params, json=entity)
+
+    def put_entity(self, entity):
+        params = {}
+        entity_id = entity.pop('id', None)
+        if not entity_id:
+            return False
+        uri_path = '/entities/' + entity_id
+        return req(self.access_token, 'PUT', uri_path, params, json=entity)
+
+    def post_entity_value(self, entity_id, value):
+        params = {}
+        uri_path = '/entities/' + entity_id + '/values'
+        return req(self.access_token, 'POST', uri_path, params, json=value)
+
+    def delete_entity(self, entity_id):
+        params = {}
+        uri_path = '/entities/' + entity_id
+        return req(self.access_token, 'DELETE', uri_path, params)
